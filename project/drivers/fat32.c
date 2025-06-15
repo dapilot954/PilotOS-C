@@ -73,6 +73,8 @@ typedef struct {
     char lfnBuffer[256];
 } FAT32_DIR;
 
+#define FAT_ENTRY_EOC 0x0FFFFFFF
+
 int strcmp(const char* s1, const char* s2) {
     while (*s1 && (*s1 == *s2)) {
         s1++; s2++;
@@ -86,6 +88,35 @@ unsigned int strlen(const char* str) {
     }
     return len;
 }
+
+void* memset(void* dest, int value, unsigned int count) {
+    unsigned char* ptr = dest;
+    while (count--) {
+        *ptr++ = (unsigned char)value;
+    }
+    return dest;
+}
+
+void* memcpy(void* dest, const void* src, unsigned int count) {
+    unsigned char* dst8 = (unsigned char*)dest;
+    const unsigned char* src8 = (const unsigned char*)src;
+    while (count--) {
+        *dst8++ = *src8++;
+    }
+    return dest;
+}
+
+char* strrchr(const char* str, int ch) {
+    const char* last = 0;
+    while (*str) {
+        if (*str == (char)ch) {
+            last = str;
+        }
+        str++;
+    }
+    return (char*)last;
+}
+
 
 
 
@@ -346,4 +377,161 @@ void fat32_list_directory(const char* path) {
 
 bool fat32_dir_exists(const char* path) {
     return resolve_path_to_cluster(path) != 0;
+}
+
+uint32_t fat32_find_free_cluster() {
+    uint32_t fat_start = fat_start_sector();
+    uint32_t entries = bpb.FATSize32 * 512 / 4;
+    uint8_t sector[512];
+
+    for (uint32_t i = 2; i < entries; i++) {
+        uint32_t offset = i * 4;
+        uint32_t sector_num = fat_start + (offset / 512);
+        uint32_t sector_offset = offset % 512;
+
+        ata_pio_read(sector_num, sector);
+        uint32_t entry = *(uint32_t*)&sector[sector_offset] & 0x0FFFFFFF;
+        if (entry == 0x00000000) {
+            // Mark it as EOC
+            *(uint32_t*)&sector[sector_offset] = FAT_ENTRY_EOC;
+            ata_pio_write(sector_num, sector);
+            return i;
+        }
+    }
+    return 0; // No free cluster found
+}
+
+
+// Helper: Write FAT entry
+void fat32_set_fat_entry(uint32_t cluster, uint32_t value) {
+    uint32_t offset = cluster * 4;
+    uint32_t sector_num = fat_start_sector() + (offset / 512);
+    uint32_t sector_offset = offset % 512;
+    uint8_t sector[512];
+
+    ata_pio_read(sector_num, sector);
+    *(uint32_t*)&sector[sector_offset] = value;
+    ata_pio_write(sector_num, sector);
+}
+
+// Create directory
+bool fat32_create_dir(const char* path) {
+    // Split into parent path and new dir name
+    char parent[256], name[256];
+    strncpy(parent, path, sizeof(parent));
+    char* last = strrchr(parent, '/');
+    if (!last) return false;
+    strncpy(name, last + 1, sizeof(name));
+    *last = '\0';
+    if (strlen(parent) == 0) strcpy(parent, "/");
+
+    uint32_t parent_cluster = resolve_path_to_cluster(parent);
+    if (parent_cluster == 0) return false;
+
+    // Ensure directory with same name does not exist
+    FAT32_DIR dir;
+    FAT32_DirectoryEntry entry;
+    char entry_name[256];
+    fat32_opendir(&dir, parent_cluster);
+    while (fat32_readdir(&dir, entry_name, &entry)) {
+        if (strcmp(entry_name, name) == 0) return false; // Already exists
+    }
+
+    // Find free cluster
+    uint32_t new_cluster = fat32_find_free_cluster();
+    if (new_cluster == 0) return false;
+
+    // Initialize the new cluster with . and ..
+    FAT32_DirectoryEntry entries[16] = {0};
+    memset(entries, 0, sizeof(entries));
+
+    // . entry
+    memcpy(entries[0].name, ".          ", 11);
+    entries[0].attr = 0x10;
+    entries[0].firstClusterLow = new_cluster & 0xFFFF;
+    entries[0].firstClusterHigh = (new_cluster >> 16) & 0xFFFF;
+
+    // .. entry
+    memcpy(entries[1].name, "..         ", 11);
+    entries[1].attr = 0x10;
+    entries[1].firstClusterLow = parent_cluster & 0xFFFF;
+    entries[1].firstClusterHigh = (parent_cluster >> 16) & 0xFFFF;
+
+    // Write new directory entries
+    ata_pio_write(cluster_to_sector(new_cluster), (uint8_t*)entries);
+
+    // Add entry to parent directory
+    fat32_opendir(&dir, parent_cluster);
+    for (int s = 0; s < bpb.sectorsPerCluster; s++) {
+        ata_pio_read(cluster_to_sector(parent_cluster) + s, dir.sectorBuffer);
+        FAT32_DirectoryEntry* ents = (FAT32_DirectoryEntry*)dir.sectorBuffer;
+        for (int i = 0; i < 512 / sizeof(FAT32_DirectoryEntry); i++) {
+            if (ents[i].name[0] == 0x00 || ents[i].name[0] == 0xE5) {
+                // Add entry
+                memset(&ents[i], 0, sizeof(FAT32_DirectoryEntry));
+                int len = strlen(name);
+                memset(ents[i].name, ' ', 11);
+                for (int j = 0; j < len && j < 11; j++) ents[i].name[j] = name[j];
+                ents[i].attr = 0x10;
+                ents[i].firstClusterLow = new_cluster & 0xFFFF;
+                ents[i].firstClusterHigh = (new_cluster >> 16) & 0xFFFF;
+                ata_pio_write(cluster_to_sector(parent_cluster) + s, dir.sectorBuffer);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Delete empty directory
+bool fat32_delete_dir(const char* path) {
+    uint32_t cluster = resolve_path_to_cluster(path);
+    if (cluster == 0) return false;
+
+    // Check if empty
+    FAT32_DIR dir;
+    FAT32_DirectoryEntry entry;
+    char name[256];
+    fat32_opendir(&dir, cluster);
+    while (fat32_readdir(&dir, name, &entry)) {
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        return false; // Not empty
+    }
+
+    // Clear FAT entry
+    fat32_set_fat_entry(cluster, 0x00000000);
+
+    // Remove from parent directory
+    char parent[256], leaf[256];
+    strncpy(parent, path, sizeof(parent));
+    char* last = strrchr(parent, '/');
+    if (!last) return false;
+    strncpy(leaf, last + 1, sizeof(leaf));
+    *last = '\0';
+    if (strlen(parent) == 0) strcpy(parent, "/");
+
+    uint32_t parent_cluster = resolve_path_to_cluster(parent);
+    if (parent_cluster == 0) return false;
+
+    for (int s = 0; s < bpb.sectorsPerCluster; s++) {
+        uint8_t buffer[512];
+        ata_pio_read(cluster_to_sector(parent_cluster) + s, buffer);
+        FAT32_DirectoryEntry* ents = (FAT32_DirectoryEntry*)buffer;
+        for (int i = 0; i < 512 / sizeof(FAT32_DirectoryEntry); i++) {
+            if (ents[i].name[0] == 0x00) break;
+            if (ents[i].name[0] == 0xE5) continue;
+            char short_name[12];
+            strncpy(short_name, (char*)ents[i].name, 11);
+            short_name[11] = '\0';
+            for (int k = 10; k >= 0 && short_name[k] == ' '; k--) short_name[k] = '\0';
+            if (strcmp(short_name, leaf) == 0) {
+                ents[i].name[0] = 0xE5; // Mark deleted
+                ata_pio_write(cluster_to_sector(parent_cluster) + s, buffer);
+                return true;
+            }
+        }
+    }
+
+    return false;
 }

@@ -97,5 +97,7 @@ bool fat32_readdir(FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_o
 void fat32_closedir(FAT32_DIR* dir);
 void fat32_list_directory(const char* path);
 bool fat32_dir_exists(const char* path);
+bool fat32_delete_dir(const char* path);
+bool fat32_create_dir(const char* path);
 
 #endif // FAT32_H

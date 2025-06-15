@@ -167,6 +167,46 @@ void terminal_run()
         print("\n");
         
     }
+    else if (starts_with_n(text, "mkdir ", 6)) {
+        char* arg = trim_front(text, 6);
+        char mkdir_path[512];
+        str_concat_into(mkdir_path, 512, path, arg);
+        if (fat32_create_dir(mkdir_path) == true)
+        {
+            char res[512];
+            str_concat_into(res, 512, "created directory ", mkdir_path);
+            print(res);
+            print("\n");
+        }
+        else
+        {
+            print("invalid syntax or directory exists");
+            print("\n");
+        }
+        print("\n");
+        
+        
+    }
+    else if (starts_with_n(text, "rmdir  ", 6)) {
+        char* arg = trim_front(text, 6);
+        char rmdir_path[512];
+        str_concat_into(rmdir_path, 512, path, arg);
+        if (fat32_delete_dir(rmdir_path) == true)
+        {
+            char res[512];
+            str_concat_into(res, 512, "created directory ", rmdir_path);
+            print(res);
+            print("\n");
+        }
+        else
+        {
+            print("invalid syntax or directory doesnt exists");
+            print("\n");
+        }
+        print("\n");
+        
+        
+    }
     else
     {
         print("invalid syntax or command not found!\n");
