@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "fat_access.h": "c",
+        "fat_filelib.h": "c",
+        "keyboard.h": "c",
+        "cstdlib": "c",
+        "stdlib.h": "c",
+        "print.h": "c",
+        "port_io.h": "c",
+        "fat32.h": "c"
+    }
+}
