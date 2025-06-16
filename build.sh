@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-rm -rf build iso fatimg.img
+rm -rf build iso fatimg1.img fatimg2.img
 mkdir -p build iso/boot/grub
 
 # Compile all .c files
@@ -26,25 +26,34 @@ cp build/kernel.elf iso/boot/kernel.elf
 cp grub.cfg iso/boot/grub/grub.cfg
 grub-mkrescue -o os_image.iso iso
 
-# --- NEW PART: Create raw FAT32 disk image ---
-# 32MB blank disk
-dd if=/dev/zero of=fatimg.img bs=1M count=32
+# --- Create first FAT32 disk image (ATA) ---
+dd if=/dev/zero of=fatimg1.img bs=1M count=64
+mkfs.vfat -F 32 fatimg1.img
 
-dd if=/dev/zero of=fatimg.img bs=1M count=64
-mkfs.vfat -F 32 fatimg.img
-
-
-# Mount and copy filesystem_data into it
-mkdir -p mnt
-sudo mount fatimg.img mnt
-sudo cp -r filesystem_data/* mnt/
+mkdir -p mnt1
+sudo mount fatimg1.img mnt1
+sudo cp -r filesystem_data1/* mnt1/ || true
 sync
-sudo umount mnt
-rmdir mnt
+sudo umount mnt1
+rmdir mnt1
 
-# --- Launch QEMU with ISO and ATA HDD ---
+# --- Create second FAT32 disk image (SATA via AHCI) ---
+dd if=/dev/zero of=fatimg2.img bs=1M count=64
+mkfs.vfat -F 32 fatimg2.img
+
+mkdir -p mnt2
+sudo mount fatimg2.img mnt2
+sudo cp -r filesystem_data2/* mnt2/ || true
+sync
+sudo umount mnt2
+rmdir mnt2
+
+# --- Launch QEMU with ISO and two disks ---
 qemu-system-i386 \
   -cdrom os_image.iso \
-  -hda fatimg.img \
+  -hda fatimg1.img \
+  -drive id=disk2,file=fatimg2.img,format=raw,if=none \
+  -device ahci,id=ahci \
+  -device ide-hd,drive=disk2,bus=ahci.0 \
   -m 512 -boot d \
   -no-reboot -serial stdio

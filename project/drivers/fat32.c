@@ -1,6 +1,7 @@
 #include "print.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include "mem.h"
 
 #pragma pack(push, 1)  // Prevent structure padding
 
@@ -87,23 +88,6 @@ unsigned int strlen(const char* str) {
         len++;
     }
     return len;
-}
-
-void* memset(void* dest, int value, unsigned int count) {
-    unsigned char* ptr = dest;
-    while (count--) {
-        *ptr++ = (unsigned char)value;
-    }
-    return dest;
-}
-
-void* memcpy(void* dest, const void* src, unsigned int count) {
-    unsigned char* dst8 = (unsigned char*)dest;
-    const unsigned char* src8 = (const unsigned char*)src;
-    while (count--) {
-        *dst8++ = *src8++;
-    }
-    return dest;
 }
 
 char* strrchr(const char* str, int ch) {

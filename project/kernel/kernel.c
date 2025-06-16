@@ -5,6 +5,7 @@
 #include "../drivers/fat32.h"
 #include "../drivers/gui.h"
 #include "../drivers/pci.h"
+#include "../drivers/ahci.h"
 
 //#include "../system/terminal.h"
 
@@ -70,7 +71,15 @@ void print_hex(uint8_t* buffer, int length) {
 
 void startup_sequence()
 {
+    print("scanning PCI Ports\n");
     pci_scan();
+    print("attempting to read cluster 0 of SATA drive\n");
+    ahci_init(0);
+    uint8_t ret1[512];
+    sata_ahci_read(0, 1, 1, ret1);
+    print_hex(ret1, 512);
+    print("read SATA disk!!!");
+
 }
 
 /*
