@@ -109,6 +109,27 @@ typedef volatile struct {
 
 static HBA_MEM* abar = 0;
 
+void ahci_port_rebase(HBA_PORT* port, int port_num) {
+    port->cmd &= ~HBA_PxCMD_ST;
+    while (port->cmd & (HBA_PxCMD_FR | HBA_PxCMD_CR));
+
+    port->cmd &= ~HBA_PxCMD_FRE;
+
+    uint64_t base = AHCI_BASE + (port_num * 0x1000);
+
+    port->clb = (uint32_t)(base);
+    port->clbu = 0;
+    memset((void*)(uintptr_t)port->clb, 0, 1024);
+
+    port->fb = (uint32_t)(base + 0x800);
+    port->fbu = 0;
+    memset((void*)(uintptr_t)port->fb, 0, 256);
+
+    port->cmd |= HBA_PxCMD_FRE;
+    port->cmd |= HBA_PxCMD_ST;
+}
+
+
 void ahci_init(uint32_t abar_phys) {
     abar = (HBA_MEM*)(uintptr_t)(abar_phys & ~0xF);
 
@@ -128,9 +149,12 @@ void ahci_init(uint32_t abar_phys) {
                 print("Port ");
                 print_uint(i);
                 print(" device present\n");
+
+                ahci_port_rebase(port, i);  // ✅ rebase port
             }
         }
     }
+
 }
 
 static int issue_ahci_cmd(HBA_PORT* port, uint8_t cmd, uint64_t lba, uint32_t sector_count, uint8_t* buf) {

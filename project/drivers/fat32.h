@@ -80,7 +80,7 @@ extern FAT32_BPB bpb;
 extern char lfn_buffer[256];
 
 // FAT32 functions
-void fat32_init(void);
+void fat32_init(uint32_t port);
 uint32_t fat_start_sector(void);
 uint32_t cluster_to_sector(uint32_t cluster);
 bool is_lfn_entry(FAT32_DirectoryEntry* entry);
@@ -88,16 +88,17 @@ void append_lfn_part(FAT32_LFNEntry* lfn);
 void print_short_name(uint8_t* name);
 bool fat32_is_dir(const FAT32_DirectoryEntry* entry);
 uint32_t get_entry_cluster(const FAT32_DirectoryEntry* entry);
-uint32_t resolve_path_to_cluster(const char* path);
-void fat32_list_root_dir(void);
+uint32_t resolve_path_to_cluster(uint32_t port, const char* path);
+void fat32_list_root_dir(uint32_t port);
+void print_first_sector(uint32_t port);
 
 // Directory operations (if you add them)
-bool fat32_opendir(FAT32_DIR* dir, uint32_t start_cluster);
-bool fat32_readdir(FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_out);
+bool fat32_opendir(uint32_t port, FAT32_DIR* dir, uint32_t start_cluster);
+bool fat32_readdir(uint32_t port, FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_out);
 void fat32_closedir(FAT32_DIR* dir);
-void fat32_list_directory(const char* path);
-bool fat32_dir_exists(const char* path);
-bool fat32_delete_dir(const char* path);
-bool fat32_create_dir(const char* path);
+void fat32_list_directory(uint32_t port, const char* path);
+bool fat32_dir_exists(uint32_t port,const char* path);
+bool fat32_delete_dir(uint32_t port,const char* path);
+bool fat32_create_dir(uint32_t port,const char* path);
 
 #endif // FAT32_H

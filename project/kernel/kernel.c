@@ -75,11 +75,30 @@ void startup_sequence()
     pci_scan();
     print("attempting to read cluster 0 of SATA drive\n");
     ahci_init(0);
-    uint8_t ret1[512];
-    sata_ahci_read(0, 1, 1, ret1);
-    print_hex(ret1, 512);
-    print("read SATA disk!!!");
+    print("read SATA disk!!!\n");
+    // sector 0 is BPB
+    uint8_t ret1[512] = {0};
+    if (sata_ahci_read(0, 0, 1, ret1) == 0) {
+        print("First bytes: ");
+        for (int i = 0; i < 8; ++i) {
+            print_hex8(ret1[i]);
+            print(" ");
+        }
+        print("\n");
+    } else {
+        print("AHCI read still failed\n");
+    }
 
+
+    /*
+    uint32_t fat_lba = get_partition_start_lba(0);
+    dump_sector(0, fat_lba);
+    print_first_sector(0);*/
+/*
+    print("initialising file system\n");
+    fat32_init(0);
+    print("filesystem initialised\n");
+*/
 }
 
 /*
@@ -120,7 +139,7 @@ void start()
 
 void run()
 {
-    //terminal_run();
+    terminal_run();
 }
 
 void kernel_main() {

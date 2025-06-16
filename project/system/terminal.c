@@ -129,7 +129,7 @@ void cd_command(const char* arg) {
     }
 
     // Check if the directory exists
-    if (fat32_dir_exists(new_path)) {
+    if (fat32_dir_exists(0, new_path)) {
         strcpy(path, new_path);
     } else {
         print("Directory does not exist.\n");
@@ -155,7 +155,7 @@ void terminal_run()
     }
     else if(starts_with_n(text, "ls", 2))
     {
-        fat32_list_directory(path);
+        fat32_list_directory(0, path);
         print("\n");
     }
     else if(starts_with_n(text, "shutdown", 8))
@@ -172,7 +172,7 @@ void terminal_run()
         char* arg = trim_front(text, 6);
         char mkdir_path[512];
         str_concat_into(mkdir_path, 512, path, arg);
-        if (fat32_create_dir(mkdir_path) == true)
+        if (fat32_create_dir(0, mkdir_path) == true)
         {
             char res[512];
             str_concat_into(res, 512, "created directory ", mkdir_path);
@@ -192,7 +192,7 @@ void terminal_run()
         char* arg = trim_front(text, 6);
         char rmdir_path[512];
         str_concat_into(rmdir_path, 512, path, arg);
-        if (fat32_delete_dir(rmdir_path) == true)
+        if (fat32_delete_dir(0, rmdir_path) == true)
         {
             char res[512];
             str_concat_into(res, 512, "created directory ", rmdir_path);
@@ -210,7 +210,7 @@ void terminal_run()
     }
     else if (starts_with_n(text, "test", 4)) {
         char* arg = trim_front(text, 4);
-        list_ata_drives();
+        fat32_list_root_dir(0);
         print("\n");
         
     }

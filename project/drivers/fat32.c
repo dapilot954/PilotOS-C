@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "mem.h"
+#include "ahci.h"
 
 #pragma pack(push, 1)  // Prevent structure padding
 
@@ -101,17 +102,122 @@ char* strrchr(const char* str, int ch) {
     return (char*)last;
 }
 
+#include <stdarg.h>
+#include <stdint.h>
 
+
+void print_hex_byte(uint8_t byte) {
+    const char* hex = "0123456789ABCDEF";
+    print_char(hex[(byte >> 4) & 0xF]);
+    print_char(hex[byte & 0xF]);
+}
+
+void printf(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    while (*fmt) {
+        if (*fmt == '%' && *(fmt + 1)) {
+            fmt++;
+            if (*fmt == '0' && *(fmt + 1) == '2' && *(fmt + 2) == 'X') {
+                uint8_t val = (uint8_t)va_arg(args, int);
+                print_hex_byte(val);
+                fmt += 2;
+            } else {
+                switch (*fmt) {
+                    case 's': {
+                        const char* str = va_arg(args, const char*);
+                        while (*str) print_char(*str++);
+                        break;
+                    }
+                    case 'c': {
+                        char c = (char)va_arg(args, int);
+                        print_char(c);
+                        break;
+                    }
+                    case 'u': {
+                        unsigned int val = va_arg(args, unsigned int);
+                        char buf[10];
+                        int i = 0;
+                        if (val == 0) {
+                            print_char('0');
+                            break;
+                        }
+                        while (val > 0) {
+                            buf[i++] = '0' + (val % 10);
+                            val /= 10;
+                        }
+                        while (i--) print_char(buf[i]);
+                        break;
+                    }
+                    default:
+                        print_char('%');
+                        print_char(*fmt);
+                        break;
+                }
+            }
+        } else {
+            print_char(*fmt);
+        }
+        fmt++;
+    }
+
+    va_end(args);
+}
+
+uint32_t get_partition_start_lba(uint32_t port) {
+    uint8_t mbr[512];
+    sata_ahci_read(port, 0, 1, mbr);
+
+    // First partition entry at offset 446
+    uint32_t lba = mbr[454] | (mbr[455] << 8) | (mbr[456] << 16) | (mbr[457] << 24);
+    return lba;
+}
+
+void dump_sector(uint32_t port, uint32_t lba) {
+    uint8_t sector[512];
+    sata_ahci_read(port, lba, 1, sector);
+
+    for (int i = 0; i < 64; i++) {
+        printf("%02X ", sector[i]);
+        if ((i + 1) % 16 == 0)
+            printf("\n");
+    }
+}
 
 
 FAT32_BPB bpb;
 char lfn_buffer[256];
 
-void fat32_init() {
+void fat32_init(uint32_t port) {
+    uint32_t fat_start = get_partition_start_lba(port);
     uint8_t sector[512];
-    ata_pio_read(0, sector);
-    bpb = *(FAT32_BPB*)sector;
+    sata_ahci_read(port, fat_start, 1, sector);
+
+    bpb.bytesPerSector      = sector[11] | (sector[12] << 8);
+    bpb.sectorsPerCluster   = sector[13];
+    bpb.reservedSectorCount = sector[14] | (sector[15] << 8);
+    bpb.numFATs             = sector[16];
+    bpb.FATSize32           = sector[36] | (sector[37] << 8) | (sector[38] << 16) | (sector[39] << 24);
+    bpb.rootCluster         = sector[44] | (sector[45] << 8) | (sector[46] << 16) | (sector[47] << 24);
+
+    printf("Reserved sectors: %u\n", bpb.reservedSectorCount);
+    printf("FATs: %u\n", bpb.numFATs);
+    printf("FAT size (FATSize32): %u\n", bpb.FATSize32);
+    printf("Sectors per cluster: %u\n", bpb.sectorsPerCluster);
+    printf("Root cluster: %u\n", bpb.rootCluster);
 }
+
+void print_first_sector(uint32_t port) {
+    uint8_t sector[512];
+    sata_ahci_read(port, 0, 1, sector);
+
+    for (int i = 0; i < 64; i++) {
+        printf("%02X ", sector[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+}
+
 
 uint32_t fat_start_sector() {
     return bpb.reservedSectorCount;
@@ -175,18 +281,18 @@ bool fat32_is_dir(const FAT32_DirectoryEntry* entry) {
     return (entry->attr & 0x10) != 0;
 }
 
-bool fat32_opendir(FAT32_DIR* dir, uint32_t cluster) {
+bool fat32_opendir(uint32_t port,FAT32_DIR* dir, uint32_t cluster) {
     dir->cluster = cluster;
     dir->sectorIndex = 0;
     dir->entryIndex = 0;
     dir->end = false;
     dir->lfnBuffer[0] = '\0';
 
-    ata_pio_read(cluster_to_sector(cluster), dir->sectorBuffer);
+    sata_ahci_read(port, cluster_to_sector(cluster), 1, dir->sectorBuffer);
     return true;
 }
 
-bool fat32_readdir(FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_out) {
+bool fat32_readdir(uint32_t port, FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_out) {
     if (dir->end) return false;
 
     while (1) {
@@ -201,7 +307,7 @@ bool fat32_readdir(FAT32_DIR* dir, char* name_out, FAT32_DirectoryEntry* entry_o
                 return false;
             }
 
-            ata_pio_read(cluster_to_sector(dir->cluster) + dir->sectorIndex, dir->sectorBuffer);
+            sata_ahci_read(port, cluster_to_sector(dir->cluster) + dir->sectorIndex,1, dir->sectorBuffer);
             continue;
         }
 
@@ -250,7 +356,7 @@ uint32_t get_entry_cluster(const FAT32_DirectoryEntry* entry) {
     return ((uint32_t)entry->firstClusterHigh << 16) | entry->firstClusterLow;
 }
 
-uint32_t resolve_path_to_cluster(const char* path) {
+uint32_t resolve_path_to_cluster(uint32_t port, const char* path) {
     if (path[0] == '/' || path[0] == '\\') path++; // skip initial slash
     if (path[0] == '\0') return bpb.rootCluster;
 
@@ -268,12 +374,12 @@ uint32_t resolve_path_to_cluster(const char* path) {
         segment[segIndex] = '\0';
         if (*path == '/' || *path == '\\') path++;
 
-        fat32_opendir(&dir, currentCluster);
+        fat32_opendir(port, &dir, currentCluster);
         char name[256];
         FAT32_DirectoryEntry entry;
         bool found = false;
 
-        while (fat32_readdir(&dir, name, &entry)) {
+        while (fat32_readdir(port, &dir, name, &entry)) {
             if (!fat32_is_dir(&entry)) continue;
             if (strcmp(name, segment) == 0) {
                 currentCluster = get_entry_cluster(&entry);
@@ -289,20 +395,35 @@ uint32_t resolve_path_to_cluster(const char* path) {
     }
 }
 
-
-void fat32_list_root_dir() {
+uint32_t fat32_get_fat_entry(uint32_t port, uint32_t cluster) {
     uint8_t sector[512];
-    uint32_t cluster = bpb.rootCluster;
+    uint32_t fat_sector = fat_start_sector() + ((cluster * 4) / 512);
+    uint32_t offset = (cluster * 4) % 512;
 
-    while (1) {
+    if (sata_ahci_read(port, fat_sector, 1, sector) != 0) {
+        return 0xFFFFFFFF; // read failed
+    }
+
+    return (sector[offset] |
+           (sector[offset + 1] << 8) |
+           (sector[offset + 2] << 16) |
+           (sector[offset + 3] << 24)) & 0x0FFFFFFF; // Mask top 4 bits
+}
+
+
+void fat32_list_root_dir(uint32_t port) {
+    uint32_t cluster = bpb.rootCluster;
+    uint8_t sector[512];
+
+    while (cluster < 0x0FFFFFF8) {
         for (uint8_t i = 0; i < bpb.sectorsPerCluster; i++) {
-            ata_pio_read(cluster_to_sector(cluster) + i, sector);
+            sata_ahci_read(port, cluster_to_sector(cluster) + i, 1, sector);
 
             FAT32_DirectoryEntry* entry = (FAT32_DirectoryEntry*)sector;
             lfn_buffer[0] = '\0';
 
             for (int j = 0; j < 512 / sizeof(FAT32_DirectoryEntry); j++) {
-                if (entry[j].name[0] == 0x00) return; // No more entries
+                if (entry[j].name[0] == 0x00) return; // End of directory
                 if (entry[j].name[0] == 0xE5) continue; // Deleted entry
 
                 if (is_lfn_entry(&entry[j])) {
@@ -314,37 +435,39 @@ void fat32_list_root_dir() {
                 if (lfn_buffer[0] != '\0') {
                     print(lfn_buffer);
                     print("\n");
-                    lfn_buffer[0] = '\0';  // reset for next
+                    lfn_buffer[0] = '\0';
                 } else {
                     print_short_name(entry[j].name);
+                    print("\n");
                 }
             }
         }
 
-        // NOTE: currently not following FAT cluster chains
-        break;
+        // Get next cluster in the chain
+        cluster = fat32_get_fat_entry(port, cluster);
     }
 }
 
-void fat32_list_directory(const char* path) {
+
+void fat32_list_directory(uint32_t port, const char* path) {
     FAT32_DIR dir;
     FAT32_DirectoryEntry entry;
     char name[256];
 
-    uint32_t cluster = resolve_path_to_cluster(path);
+    uint32_t cluster = resolve_path_to_cluster(port, path);
     if (cluster == 0) {
         print("Directory not found\n");
         return;
     }
 
-    if (!fat32_opendir(&dir, cluster)) {
+    if (!fat32_opendir(port, &dir, cluster)) {
         print("Failed to open directory\n");
         return;
     }
 
     print("Directory listing:\n");
 
-    while (fat32_readdir(&dir, name, &entry)) {
+    while (fat32_readdir(port, &dir, name, &entry)) {
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
             continue; // skip special entries
         }
@@ -359,11 +482,11 @@ void fat32_list_directory(const char* path) {
     fat32_closedir(&dir);
 }
 
-bool fat32_dir_exists(const char* path) {
-    return resolve_path_to_cluster(path) != 0;
+bool fat32_dir_exists(uint32_t port, const char* path) {
+    return resolve_path_to_cluster(port, path) != 0;
 }
 
-uint32_t fat32_find_free_cluster() {
+uint32_t fat32_find_free_cluster(uint32_t port) {
     uint32_t fat_start = fat_start_sector();
     uint32_t entries = bpb.FATSize32 * 512 / 4;
     uint8_t sector[512];
@@ -373,12 +496,12 @@ uint32_t fat32_find_free_cluster() {
         uint32_t sector_num = fat_start + (offset / 512);
         uint32_t sector_offset = offset % 512;
 
-        ata_pio_read(sector_num, sector);
+        sata_ahci_read(port, sector_num,1, sector);
         uint32_t entry = *(uint32_t*)&sector[sector_offset] & 0x0FFFFFFF;
         if (entry == 0x00000000) {
             // Mark it as EOC
             *(uint32_t*)&sector[sector_offset] = FAT_ENTRY_EOC;
-            ata_pio_write(sector_num, sector);
+            sata_ahci_write(port, sector_num,1, sector);
             return i;
         }
     }
@@ -387,19 +510,19 @@ uint32_t fat32_find_free_cluster() {
 
 
 // Helper: Write FAT entry
-void fat32_set_fat_entry(uint32_t cluster, uint32_t value) {
+void fat32_set_fat_entry(uint32_t port, uint32_t cluster, uint32_t value) {
     uint32_t offset = cluster * 4;
     uint32_t sector_num = fat_start_sector() + (offset / 512);
     uint32_t sector_offset = offset % 512;
     uint8_t sector[512];
 
-    ata_pio_read(sector_num, sector);
+    sata_ahci_read(port, sector_num, 1, sector);
     *(uint32_t*)&sector[sector_offset] = value;
-    ata_pio_write(sector_num, sector);
+    sata_ahci_write(port, sector_num,1, sector);
 }
 
 // Create directory
-bool fat32_create_dir(const char* path) {
+bool fat32_create_dir(uint32_t port, const char* path) {
     // Split into parent path and new dir name
     char parent[256], name[256];
     strncpy(parent, path, sizeof(parent));
@@ -409,20 +532,20 @@ bool fat32_create_dir(const char* path) {
     *last = '\0';
     if (strlen(parent) == 0) strcpy(parent, "/");
 
-    uint32_t parent_cluster = resolve_path_to_cluster(parent);
+    uint32_t parent_cluster = resolve_path_to_cluster(port, parent);
     if (parent_cluster == 0) return false;
 
     // Ensure directory with same name does not exist
     FAT32_DIR dir;
     FAT32_DirectoryEntry entry;
     char entry_name[256];
-    fat32_opendir(&dir, parent_cluster);
-    while (fat32_readdir(&dir, entry_name, &entry)) {
+    fat32_opendir(port, &dir, parent_cluster);
+    while (fat32_readdir(port, &dir, entry_name, &entry)) {
         if (strcmp(entry_name, name) == 0) return false; // Already exists
     }
 
     // Find free cluster
-    uint32_t new_cluster = fat32_find_free_cluster();
+    uint32_t new_cluster = fat32_find_free_cluster(port);
     if (new_cluster == 0) return false;
 
     // Initialize the new cluster with . and ..
@@ -442,12 +565,12 @@ bool fat32_create_dir(const char* path) {
     entries[1].firstClusterHigh = (parent_cluster >> 16) & 0xFFFF;
 
     // Write new directory entries
-    ata_pio_write(cluster_to_sector(new_cluster), (uint8_t*)entries);
+    sata_ahci_write(port, cluster_to_sector(new_cluster),1, (uint8_t*)entries);
 
     // Add entry to parent directory
-    fat32_opendir(&dir, parent_cluster);
+    fat32_opendir(port, &dir, parent_cluster);
     for (int s = 0; s < bpb.sectorsPerCluster; s++) {
-        ata_pio_read(cluster_to_sector(parent_cluster) + s, dir.sectorBuffer);
+        sata_ahci_read(port, cluster_to_sector(parent_cluster) + s,1, dir.sectorBuffer);
         FAT32_DirectoryEntry* ents = (FAT32_DirectoryEntry*)dir.sectorBuffer;
         for (int i = 0; i < 512 / sizeof(FAT32_DirectoryEntry); i++) {
             if (ents[i].name[0] == 0x00 || ents[i].name[0] == 0xE5) {
@@ -459,7 +582,7 @@ bool fat32_create_dir(const char* path) {
                 ents[i].attr = 0x10;
                 ents[i].firstClusterLow = new_cluster & 0xFFFF;
                 ents[i].firstClusterHigh = (new_cluster >> 16) & 0xFFFF;
-                ata_pio_write(cluster_to_sector(parent_cluster) + s, dir.sectorBuffer);
+                sata_ahci_write(port, cluster_to_sector(parent_cluster) + s,1, dir.sectorBuffer);
                 return true;
             }
         }
@@ -469,22 +592,22 @@ bool fat32_create_dir(const char* path) {
 }
 
 // Delete empty directory
-bool fat32_delete_dir(const char* path) {
-    uint32_t cluster = resolve_path_to_cluster(path);
+bool fat32_delete_dir(uint32_t port, const char* path) {
+    uint32_t cluster = resolve_path_to_cluster(port, path);
     if (cluster == 0) return false;
 
     // Check if empty
     FAT32_DIR dir;
     FAT32_DirectoryEntry entry;
     char name[256];
-    fat32_opendir(&dir, cluster);
-    while (fat32_readdir(&dir, name, &entry)) {
+    fat32_opendir(port, &dir, cluster);
+    while (fat32_readdir(port, &dir, name, &entry)) {
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
         return false; // Not empty
     }
 
     // Clear FAT entry
-    fat32_set_fat_entry(cluster, 0x00000000);
+    fat32_set_fat_entry(port, cluster, 0x00000000);
 
     // Remove from parent directory
     char parent[256], leaf[256];
@@ -495,12 +618,12 @@ bool fat32_delete_dir(const char* path) {
     *last = '\0';
     if (strlen(parent) == 0) strcpy(parent, "/");
 
-    uint32_t parent_cluster = resolve_path_to_cluster(parent);
+    uint32_t parent_cluster = resolve_path_to_cluster(port, parent);
     if (parent_cluster == 0) return false;
 
     for (int s = 0; s < bpb.sectorsPerCluster; s++) {
         uint8_t buffer[512];
-        ata_pio_read(cluster_to_sector(parent_cluster) + s, buffer);
+        sata_ahci_read(0, cluster_to_sector(parent_cluster) + s,1, buffer);
         FAT32_DirectoryEntry* ents = (FAT32_DirectoryEntry*)buffer;
         for (int i = 0; i < 512 / sizeof(FAT32_DirectoryEntry); i++) {
             if (ents[i].name[0] == 0x00) break;
@@ -511,7 +634,7 @@ bool fat32_delete_dir(const char* path) {
             for (int k = 10; k >= 0 && short_name[k] == ' '; k--) short_name[k] = '\0';
             if (strcmp(short_name, leaf) == 0) {
                 ents[i].name[0] = 0xE5; // Mark deleted
-                ata_pio_write(cluster_to_sector(parent_cluster) + s, buffer);
+                sata_ahci_write(port, cluster_to_sector(parent_cluster) + s,1, buffer);
                 return true;
             }
         }

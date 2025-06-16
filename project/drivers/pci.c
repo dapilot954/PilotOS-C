@@ -90,7 +90,7 @@ void pci_scan() {
                     print_hex32(abar);
                     print("\n");
 
-                    ahci_init(abar);
+                    //ahci_init(abar);
                 }
             }
         }
