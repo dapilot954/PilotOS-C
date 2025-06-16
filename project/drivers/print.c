@@ -69,3 +69,39 @@ void update_hardware_cursor(uint8_t row, uint8_t col) {
     outb(0x3D4, 0x0F);
     outb(0x3D5, pos & 0xFF);
 }
+
+void print_uint(uint32_t n) {
+    char buf[11];
+    int i = 10;
+    buf[i--] = '\0';
+    if (n == 0) {
+        buf[i] = '0';
+        print(&buf[i]);
+        return;
+    }
+    while (n && i >= 0) {
+        buf[i--] = '0' + (n % 10);
+        n /= 10;
+    }
+    print(&buf[i + 1]);
+}
+
+void print_hex16(uint16_t n) {
+    char hex[5];
+    hex[4] = '\0';
+    for (int i = 3; i >= 0; i--) {
+        hex[i] = "0123456789ABCDEF"[n & 0xF];
+        n >>= 4;
+    }
+    print(hex);
+}
+
+void print_hex32(uint32_t val) {
+    const char* hex = "0123456789ABCDEF";
+    char str[9];
+    for (int i = 0; i < 8; i++) {
+        str[7 - i] = hex[(val >> (i * 4)) & 0xF];
+    }
+    str[8] = '\0';
+    print(str);
+}

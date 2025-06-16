@@ -3,6 +3,7 @@
 #include "../drivers/port_io.h"
 #include "../drivers/fat32.h"
 #include <stdint.h>
+#include "../drivers/drive_tools.h"
 typedef uint32_t size_t;
 
 
@@ -205,6 +206,12 @@ void terminal_run()
         }
         print("\n");
         
+        
+    }
+    else if (starts_with_n(text, "test", 4)) {
+        char* arg = trim_front(text, 4);
+        list_ata_drives();
+        print("\n");
         
     }
     else

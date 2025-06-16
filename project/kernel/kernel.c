@@ -4,6 +4,7 @@
 #include "../drivers/bool.h"
 #include "../drivers/fat32.h"
 #include "../drivers/gui.h"
+#include "../drivers/pci.h"
 
 //#include "../system/terminal.h"
 
@@ -67,7 +68,12 @@ void print_hex(uint8_t* buffer, int length) {
     }
 }
 
+void startup_sequence()
+{
+    pci_scan();
+}
 
+/*
 void startup_sequence()
 {
     print("Hello from kernel with FAT support!\n");
@@ -98,14 +104,14 @@ void startup_sequence()
     gui_clear_screen();
     print("PilotOS Kernel Version 0.1 Loaded successfully!\n");
 }
-
+*/
 void start()
 {
 }
 
 void run()
 {
-    terminal_run();
+    //terminal_run();
 }
 
 void kernel_main() {
